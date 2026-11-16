@@ -72,16 +72,21 @@ static inline int br_write8(volatile uint32_t *chn, int apid, uint8_t byte_addr,
   ch[BR_CMD / 4] = br_cmd(BR_OP_EXT_WRITEL, byte_addr, 0);
   return br_wait(ch);
 }
-// Sets the reboot-reason cell to "bootloader", leaving bit 0, and reads it back. 0 = written and verified.
-static inline int br_set_bootloader(volatile uint32_t *obs, volatile uint32_t *chn, const struct br_arbiter *a, int apid, uint8_t *before,
-                                    uint8_t *after) {
+// Writes value into the reboot-reason bits of the cell, leaving bit 0, and reads it back. 0 = written and verified.
+static inline int br_set_reboot_cell(volatile uint32_t *obs, volatile uint32_t *chn, const struct br_arbiter *a, int apid, uint8_t value,
+                                     uint8_t *before, uint8_t *after) {
   int rc = br_read8(obs, a, apid, BR_REBOOT_CELL, before);
   if (rc) return 10 + rc;
-  uint8_t next = (uint8_t)((*before & ~BR_REBOOT_MASK) | (BR_REBOOT_BOOTLOADER << BR_REBOOT_SHIFT));
+  uint8_t next = (uint8_t)((*before & ~BR_REBOOT_MASK) | ((value << BR_REBOOT_SHIFT) & BR_REBOOT_MASK));
   rc = br_write8(chn, apid, BR_REBOOT_CELL, next);
   if (rc) return 20 + rc;
   rc = br_read8(obs, a, apid, BR_REBOOT_CELL, after);
   if (rc) return 30 + rc;
   return *after == next ? 0 : 40;
+}
+
+static inline int br_set_bootloader(volatile uint32_t *obs, volatile uint32_t *chn, const struct br_arbiter *a, int apid, uint8_t *before,
+                                    uint8_t *after) {
+  return br_set_reboot_cell(obs, chn, a, apid, BR_REBOOT_BOOTLOADER, before, after);
 }
 #endif

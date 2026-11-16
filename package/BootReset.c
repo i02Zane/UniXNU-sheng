@@ -116,18 +116,29 @@ int boot_reset_probe(char *text, unsigned cap) {
   return writable ? 0 : 1;
 }
 
-// Writes "bootloader" into the reboot-reason cell and verifies it, without restarting. Done once early in an unattended run, it sends every
-// later restart to fastboot: the timed one below, a watchdog bite, or a long press of the power key.
-int boot_reset_mark_bootloader(char *text, unsigned cap) {
+// One reboot-reason write and its verification, without restarting. BR_REBOOT_BOOTLOADER sends every later restart to fastboot; 0 leaves
+// the next restart on the installed system, which is what a daily image needs.
+static int boot_reset_cell(unsigned value, char *text, unsigned cap) {
   struct reset_maps m;
   uint8_t before = 0xff, after = 0xff;
   int rc = open_maps(&m, 1);
-  if (rc) {snprintf(text, cap, "mark refused: open=%d find=%d", rc, m.find); unmap_all(&m); return rc;}
-  if (m.f.owner != m.a.ee) {snprintf(text, cap, "mark refused: apid %d is owned by EE %d", m.f.apid, m.f.owner); unmap_all(&m); return 5;}
-  rc = br_set_bootloader(m.obs, m.chn, &m.a, m.f.apid, &before, &after);
-  snprintf(text, cap, "mark: cell %02x -> %02x rc=%d", before, after, rc);
+  if (rc) {snprintf(text, cap, "cell %u refused: open=%d find=%d", value, rc, m.find); unmap_all(&m); return rc;}
+  if (m.f.owner != m.a.ee) {snprintf(text, cap, "cell %u refused: apid %d is owned by EE %d", value, m.f.apid, m.f.owner); unmap_all(&m); return 5;}
+  rc = br_set_reboot_cell(m.obs, m.chn, &m.a, m.f.apid, (uint8_t)value, &before, &after);
+  snprintf(text, cap, "cell %u: %02x -> %02x rc=%d", value, before, after, rc);
   unmap_all(&m);
   return rc ? 10 + rc : 0;
+}
+
+// Writes "bootloader" into the reboot-reason cell and verifies it, without restarting. Done once early in an unattended run, it sends every
+// later restart to fastboot: the timed one below, a watchdog bite, or a long press of the power key.
+int boot_reset_mark_bootloader(char *text, unsigned cap) {
+  return boot_reset_cell(BR_REBOOT_BOOTLOADER, text, cap);
+}
+
+// Clears the reboot-reason bits. A boot that runs this leaves the next restart free to boot the installed system instead of fastboot.
+int boot_reset_clear_bootloader(char *text, unsigned cap) {
+  return boot_reset_cell(0, text, cap);
 }
 
 // Gunyah accepts watchdog timeouts up to 32000 ms. Firmware hands over an armed 30000 ms timer;

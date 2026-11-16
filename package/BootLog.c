@@ -391,6 +391,7 @@ extern volatile uint32_t native_adreno_view_diag[6] __attribute__((weak_import))
 extern int boot_reset_probe(char *, unsigned) __attribute__((weak_import));
 extern int boot_reset_bootloader(char *, unsigned) __attribute__((weak_import));
 extern int boot_reset_mark_bootloader(char *, unsigned) __attribute__((weak_import));
+extern int boot_reset_clear_bootloader(char *, unsigned) __attribute__((weak_import));
 extern int reboot_kernel(int howto, char *message);
 // The orderly reboot of autoreset-clean (below): RB_AUTOBOOT, not RB_QUICK, so every process gets SIGTERM before the restart.
 static void clean_reboot(void *arg, wait_result_t result) {
@@ -404,7 +405,8 @@ extern volatile uint64_t native_adreno_import_live[3 + 8 * 4] __attribute__((wea
 extern volatile uint32_t native_adreno_import_persistent[2] __attribute__((weak_import));
 extern volatile uint64_t native_adreno_import_fail_pa __attribute__((weak_import)), native_adreno_import_fail_offset __attribute__((weak_import));
 // What the reset probe and the autoreset attempt saw, for the [reset] section of the log.
-static char boot_log_reset_probe_text[240], boot_log_reset_result[120], boot_log_reset_mark[64], boot_log_reset_watchdog[120];
+static char boot_log_reset_probe_text[240], boot_log_reset_result[120], boot_log_reset_mark[64], boot_log_reset_clear[64],
+    boot_log_reset_watchdog[120];
 // The kernel message buffer (bsd/sys/msgbuf.h); only these leading fields are read.
 struct boot_log_msgbuf {int msg_magic, msg_size, msg_bufx, msg_bufr; char *msg_bufc;};
 extern struct boot_log_msgbuf *msgbufp;
@@ -2503,6 +2505,7 @@ static size_t compose(char *out, size_t cap, uint32_t slot, unsigned now) {
     at = put(out, at, cap, "[reset]", 8);
     at = put(out, at, cap, boot_log_reset_probe_text, sizeof boot_log_reset_probe_text);
     if (boot_log_reset_mark[0]) at = put(out, at, cap, boot_log_reset_mark, sizeof boot_log_reset_mark);
+    if (boot_log_reset_clear[0]) at = put(out, at, cap, boot_log_reset_clear, sizeof boot_log_reset_clear);
     if (boot_log_reset_watchdog[0]) at = put(out, at, cap, boot_log_reset_watchdog, sizeof boot_log_reset_watchdog);
     if (boot_log_reset_result[0]) at = put(out, at, cap, boot_log_reset_result, sizeof boot_log_reset_result);
   }
@@ -3043,7 +3046,13 @@ static void boot_reset_arm(void) {
   PE_parse_boot_argn("uefi-watchdog", &inherited, sizeof inherited);
   if ((autoreset || inherited) && &boot_reset_probe &&
       boot_reset_probe(boot_log_reset_probe_text, sizeof boot_log_reset_probe_text) == 0) {
-    if (&boot_reset_mark_bootloader) boot_reset_mark_bootloader(boot_log_reset_mark, sizeof boot_log_reset_mark);
+    uint32_t clear = 0;
+    PE_parse_boot_argn("clear-reset-reason", &clear, sizeof clear);
+    if (clear == 1) {
+      if (&boot_reset_clear_bootloader) boot_reset_clear_bootloader(boot_log_reset_clear, sizeof boot_log_reset_clear);
+    } else if (&boot_reset_mark_bootloader) {
+      boot_reset_mark_bootloader(boot_log_reset_mark, sizeof boot_log_reset_mark);
+    }
     if (&boot_reset_watchdog) boot_reset_watchdog(autoreset ? autoreset + 30 : 0, boot_log_reset_watchdog, sizeof boot_log_reset_watchdog);
   }
 }

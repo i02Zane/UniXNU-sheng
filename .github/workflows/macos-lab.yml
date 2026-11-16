@@ -76,7 +76,6 @@ jobs:
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/build/adreno-metal-bridge
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/build/m2v-target
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/build/mesa-tu-macos27
-            UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/runtime/data.dbr
             device/drivers/Ath12kWifi/deps
             device/.cache/firmware
       - name: Refresh pinned translator checkout
@@ -176,6 +175,33 @@ jobs:
               objects += ['--object', f'{name}.vroot={ctx.tree}/build/verified-root-{name}/hashes.bin']
           subprocess.run(['./unixnu', 'build', 'userdata', '--os', 'macos-27', *objects], check=True)
           PY
+      - name: Validate 128 GB installation layout
+        if: inputs.root_storage
+        run: |
+          python3 - <<'PYTHON'
+          import json, tomllib
+          from pathlib import Path
+          board = tomllib.loads(Path('device/board.toml').read_text())
+          target = Path('UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos')
+          root = json.loads((target / 'userdata/userdata-root.json').read_text())
+          spec = board['userdata']
+          capacity = (spec['last_lba'] - spec['first_lba'] + 1) * spec['lba_bytes']
+          data_bytes = board['os_overrides']['macos-27.3-26C5035r']['payload']['runtime']['data_gib'] * 2**30
+          # Conservative 1 GiB allowance for persistent-store metadata, plus the
+          # driver's 1 GiB log reserve and 4 MiB minimum root/store separation.
+          reserved = 2 * 2**30 + 4 * 2**20
+          assert capacity == 112948121600, 'Unexpected target capacity'
+          assert root['userdata_bytes'] == capacity, 'Root report geometry differs'
+          assert root['image_bytes'] + data_bytes + reserved < capacity, 'Root and persistent Data may overlap'
+          image = target / 'boot/boot.img'
+          assert image.stat().st_size <= 201326592, 'Boot image exceeds the measured boot partition'
+          result = dict(userdata_bytes=capacity, root_bytes=root['image_bytes'], data_bytes=data_bytes,
+                        conservative_reserved_bytes=reserved,
+                        remaining_bytes=capacity-root['image_bytes']-data_bytes-reserved,
+                        boot_bytes=image.stat().st_size)
+          (target / 'installation-layout.json').write_text(json.dumps(result, indent=2) + '\n')
+          print(json.dumps(result, indent=2))
+          PYTHON
       - name: Stage device artifacts
         env:
           BUILD_ROOT_STORAGE: ${{ inputs.root_storage }}
@@ -184,11 +210,26 @@ jobs:
           target=UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos
           cp "$target/boot/boot.img" "$target/payload/payload.img" "$target/kernel/kernel.macho" "$target/package.manifest.json" artifacts/
           cp "$target/runtime/data.dbr" artifacts/
+          cp "$target/boot/boot.json" artifacts/
+          if [ -f "$target/installation-layout.json" ]; then cp "$target/installation-layout.json" artifacts/; fi
           cp "$target/tree/build/prime-list.txt" "$target/tree/build/prime-list.json" artifacts/
           if [ "$BUILD_ROOT_STORAGE" = true ]; then
             cp "$target/userdata/userdata-root.json" artifacts/
             zstd -T0 -3 --sparse "$target/userdata/userdata-root.img" -o artifacts/userdata-root.img.zst
           fi
+      - name: Hash installation artifacts
+        run: |
+          python3 - <<'PYTHON'
+          import hashlib
+          from pathlib import Path
+          root = Path('artifacts')
+          rows = []
+          for path in sorted(root.iterdir()):
+              if path.is_file():
+                  with path.open('rb') as source:
+                      rows.append(f'{hashlib.file_digest(source, "sha256").hexdigest()}  {path.name}\n')
+          (root / 'SHA256SUMS').write_text(''.join(rows))
+          PYTHON
       - uses: actions/upload-artifact@v4
         with:
           name: sheng-macos-27
@@ -218,7 +259,6 @@ jobs:
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/build/adreno-metal-bridge
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/build/m2v-target
             UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/tree/build/mesa-tu-macos27
-            UniXNU/out/sheng/macos-27.3-26C5035r/sheng_macos/runtime/data.dbr
             device/drivers/Ath12kWifi/deps
             device/.cache/firmware
       - name: Save kernel compile records
